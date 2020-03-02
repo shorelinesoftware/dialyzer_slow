@@ -1,6 +1,6 @@
 # DialyzerSlow
 
-Reproduce issue repo
+Reproduce issue repo, solved!
 
 ## Elixir/Erlang version
 mix hex.info
@@ -83,4 +83,50 @@ defmodule DialyzerSlow.Router do
   end
 end
 ```
+
+## Root casue
+(Reply from Jose)
+The issue is that `DialyzerSlow.Mock.make_res_data` actually generates a very large data structure. Since this structure may take a while to compute, you put it behind a module attribute, like this:
+
+    @db %{"res" => Mock.make_res_data()}
+
+And then you use it in multiple places:
+
+    get "endpoint1" do
+      res = Map.get(@db, "res")
+      send_resp(conn, 200, inspect(res))
+    end
+
+The problem is, every time you access the `@db` module attribute, you are getting a full copy of the data-structure and injecting it into the source code. So if you use `@db` three times, it is three copies in memory and Dialyzer just spends an absurd amount of time trying to retrieve its full type.
+
+
+### Solutions:
+There are two possible solutions to the problem. One option is to fetch the data at runtime always but never at compile time:
+
+```elixir
+  get "endpoint1" do
+    res = Map.get(db(), "res")
+    send_resp(conn, 200, inspect(res))
+  end
+
+  defp db do
+    Mock.make_res_data()
+  end
+```
+
+Of course, this solution occurs a runtime cost now and it may not be what you want. A less radical alternative is to mix both solution so you at least inject `@db` only once:
+
+```elixir
+  get "endpoint1" do
+    res = Map.get(db(), "res")
+    send_resp(conn, 200, inspect(res))
+  end
+
+  @db %{"res" => Mock.make_res_data()}
+  defp db, do: @db
+```
+
+This should limit the compilation time considerably (probably around 20s according to your initial benchmark). Another approach to consider is to also decrease the size of the data a bit.
+
+
 
